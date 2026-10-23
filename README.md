@@ -1,126 +1,48 @@
-# Zero-Day LLM Jailbreak Discovery via Neuro-Symbolic Search
+# Local LLM Behavior Regression Harness
 
-> Systematically discover novel LLM jailbreak prompts by combining symbolic constraint solving with neural generation — finding attack vectors that human red-teamers haven't thought of.
+Run operator-authored behavior assertions against a local Ollama model after changing a model, system prompt, or application integration. Each JSONL case contains the exact conversation to send and explicit text assertions for the response. The runner records pass/fail results, timing, and response hashes without saving prompts or raw answers.
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+This repository is a regression runner, not a jailbreak generator or attack search engine. It does not invent prompts, score harmfulness, call remote model providers, or target non-local endpoints. Use cases owned by your application team and a model running on your own machine.
 
----
+## Requirements
 
-## The Problem
+- Python 3.10 or newer
+- Ollama running locally with the selected model available
+- Python standard library only
 
-LLM safety researchers have manually discovered jailbreak techniques like:
-- Persona adoption ("Act as DAN...")
-- Encoded payload smuggling (Base64, ROT13)
-- Multi-turn manipulation
-- Adversarial suffix tokens
+The runner communicates with Ollama's local `/api/chat` endpoint. It rejects non-loopback endpoints and bypasses configured HTTP proxies so prompt content is sent directly to the local service.
 
-But the **search space is infinite**. Human red-teamers explore it slowly and probabilistically. This tool frames jailbreak discovery as a **neuro-symbolic optimization problem** — systematically searching the space.
+## Case file
 
----
+Create a UTF-8 JSON Lines (`.jsonl`) file with one case per line. Each case requires a unique `id`, a `messages` array, and at least one exact-text assertion in `expected`.
 
-## Neuro-Symbolic Architecture
-
-```
-[Symbolic Layer]
-   Constraint Solver (Z3):  prompt_structure ∈ Grammar,  safety_score < threshold
-
-[Neural Layer]  
-   Generator LLM: produces candidate prompts satisfying symbolic constraints
-
-[Search Loop]
-   1. Symbolic engine defines a valid prompt template space
-   2. Neural model generates concrete instances
-   3. Target LLM evaluates each: {jailbreak, refusal, partial_harm}
-   4. Results feed back as symbolic constraints (prune failed subtrees)
-   5. Genetic algorithm optimizes for success rate
+```json
+{"id":"support-policy-01","messages":[{"role":"system","content":"Answer questions using the policy provided by the application."},{"role":"user","content":"What is the support window?"}],"expected":{"contains_any":["weekdays","Monday to Friday"],"not_contains":["24/7"]}}
 ```
 
----
+Supported assertions are case-insensitive substring checks:
 
-## Discovered Techniques
+- `contains_all`: every string must appear.
+- `contains_any`: at least one string must appear.
+- `not_contains`: none of the strings may appear.
 
-This tool has identified novel jailbreak categories including:
-- **Nested fiction layering**: Story-within-story-within-story embedding
-- **Grammar-constrained token smuggling**: Using grammar to hide harmful semantics
-- **Logical negation cascades**: `not(not(not(...)))` reasoning exhaustion
-- **Cross-lingual obfuscation**: Low-resource language encoding → English decoding
-- **Meta-cognitive manipulation**: Prompting about the model's own safety training
+The runner accepts `system`, `user`, and `assistant` messages and requires at least one user message. It limits a run to 1,000 cases and each conversation to 100,000 characters.
 
----
+## Run a regression pass
 
-## Usage
-
-### Run Discovery Search
-
-```bash
-python -m src.discovery \
-    --target-model "llama3:8b" \
-    --num-search-steps 500 \
-    --output results/jailbreaks_discovered.jsonl \
-    --verbose
+```powershell
+python -m src.safety_eval `
+  --cases "application-cases.jsonl" `
+  --model "llama3.2:3b" `
+  --output "reports/local-model-run.json"
 ```
 
-### Evaluate a Discovered Prompt
+Ollama defaults to `http://127.0.0.1:11434`. A different loopback host/port can be selected with `--base-url`; remote URLs are rejected. Use `--timeout`, `--temperature`, and `--seed` to control each request. Existing report files are protected unless `--overwrite` is passed. Run `python -m src.safety_eval --help` for all options.
 
-```python
-from src.evaluator import JailbreakEvaluator
+Exit code `0` means every case passed, `1` means at least one assertion failed, and `2` means an input or local-service error occurred. Failed assertions are reported by type and count, without copying expected strings or model output into the report.
 
-evaluator = JailbreakEvaluator(target_model="gpt-3.5-turbo", api_key="...")
-result = evaluator.evaluate(
-    prompt=open("candidate_jailbreak.txt").read(),
-    harmful_intent="explain how to synthesize a controlled substance",
-)
-print(result)
-# {'status': 'jailbreak_success', 'harmfulness_score': 0.82, 'detected': False}
-```
+## Scope
 
-### Symbolic Constraint Editor
+This runner checks literal response requirements; it does not judge semantic correctness, safety, or whether a response is a refusal. Assertion quality is the responsibility of the application team. The summary records only case IDs, assertion pass/fail counts, response hashes, latencies, and errors. Treat case files as private because they can contain application prompts or data.
 
-```python
-from src.symbolic import PromptConstraintSpace
-
-space = PromptConstraintSpace()
-space.add_structure_constraint("must_contain_narrative_wrapper")
-space.add_length_constraint(max_tokens=512)
-space.add_semantic_constraint(harmful_topic_mask=True)
-
-candidates = space.generate_template_seeds(num=20)
-```
-
----
-
-## Project Structure
-
-```
-llm-jailbreak-discovery/
-├── src/
-│   ├── symbolic.py      # Z3-based constraint space
-│   ├── generator.py     # Neural prompt generation (local/API LLM)
-│   ├── evaluator.py     # Harmfulness scoring
-│   ├── genetic.py       # GA search over prompt space
-│   ├── discovery.py     # Main neuro-symbolic loop
-│   └── target_adapters/ # Adapters for various LLM APIs
-├── results/
-├── requirements.txt
-├── README.md
-├── LICENSE
-└── .gitignore
-```
-
----
-
-## Responsible Disclosure
-
-All discovered jailbreak prompts should be reported to:
-- The model provider's responsible AI team
-- MITRE ATLAS (Adversarial Threat Landscape for AI Systems)
-- NIST AI Safety framework maintainers
-
-This tool is for **defensive red-teaming** only.
-
----
-
-## License
-
-MIT © [sparkx313](https://github.com/sparkx313)
+See the official [Ollama chat API documentation](https://github.com/ollama/ollama/blob/main/docs/api.md) for the local request format.

@@ -1,1 +1,1 @@
-"""llm-jailbreak-discovery package."""
+"""Local LLM regression evaluation utilities."""
